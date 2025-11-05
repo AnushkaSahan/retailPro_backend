@@ -14,6 +14,6 @@ public interface SaleRepository extends JpaRepository<Sale, Long> {
     @Query("SELECT s FROM Sale s WHERE s.cashier.id = :cashierId")
     List<Sale> findByCashierId(Long cashierId);
 
-    @Query("SELECT COUNT(s) FROM Sale s WHERE DATE(s.saleDate) = CURRENT_DATE")
+    @Query("SELECT COUNT(s) FROM Sale s WHERE CAST(s.saleDate AS date) = CURRENT_DATE")
     Long countTodaySales();
 }
