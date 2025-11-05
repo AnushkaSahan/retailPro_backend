@@ -1,4 +1,4 @@
-package com.retailPro.MS;
+package com.retailpro;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
