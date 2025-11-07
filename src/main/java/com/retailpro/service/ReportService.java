@@ -8,7 +8,9 @@ import com.retailpro.repository.SaleRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -30,24 +32,25 @@ public class ReportService {
     }
 
     public Map<String, Object> getDailySalesReport() {
-        LocalDateTime startOfDay = LocalDateTime.now().withHour(0)
-                .withMinute(0)
-                .withSecond(0);
-        LocalDateTime endOfDay = LocalDateTime.now().withHour(23)
-                .withMinute(59)
-                .withSecond(59);
+        LocalDateTime startOfDay = LocalDate.now().atStartOfDay();
+        LocalDateTime endOfDay = LocalDate.now().atTime(LocalTime.MAX);
 
-        List<Sale> todaySales = saleRepository.findBySaleDateBetween(
-                startOfDay, endOfDay);
+        List<Sale> todaySales = saleRepository.findBySaleDateBetween(startOfDay, endOfDay);
 
         BigDecimal totalRevenue = todaySales.stream()
                 .map(Sale::getTotalAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
+        Integer totalSales = todaySales.size();
+        BigDecimal avgSaleValue = totalSales > 0
+                ? totalRevenue.divide(new BigDecimal(totalSales), 2, BigDecimal.ROUND_HALF_UP)
+                : BigDecimal.ZERO;
+
         Map<String, Object> report = new HashMap<>();
-        report.put("date", LocalDateTime.now().toLocalDate());
-        report.put("totalSales", todaySales.size());
+        report.put("date", LocalDate.now());
+        report.put("totalSales", totalSales);
         report.put("totalRevenue", totalRevenue);
+        report.put("avgSaleValue", avgSaleValue);
         report.put("sales", todaySales);
 
         return report;
@@ -55,8 +58,7 @@ public class ReportService {
 
     public Map<String, Object> getInventorySummary() {
         List<Product> allProducts = productRepository.findAll();
-        List<Product> lowStockProducts = productRepository
-                .findByStockQtyLessThan(10);
+        List<Product> lowStockProducts = productRepository.findByStockQtyLessThan(10);
 
         Integer totalProducts = allProducts.size();
         Integer totalStock = allProducts.stream()
