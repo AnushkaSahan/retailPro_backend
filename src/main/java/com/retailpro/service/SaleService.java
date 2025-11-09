@@ -23,16 +23,19 @@ public class SaleService {
     private final ProductRepository productRepository;
     private final CustomerRepository customerRepository;
     private final UserRepository userRepository;
+    private final NotificationRepository notificationRepository;
 
     @Autowired
     public SaleService(SaleRepository saleRepository,
                        ProductRepository productRepository,
                        CustomerRepository customerRepository,
-                       UserRepository userRepository) {
+                       UserRepository userRepository,
+                       NotificationRepository notificationRepository) {
         this.saleRepository = saleRepository;
         this.productRepository = productRepository;
         this.customerRepository = customerRepository;
         this.userRepository = userRepository;
+        this.notificationRepository = notificationRepository;
     }
 
     public List<Sale> getAllSales() {
@@ -47,40 +50,28 @@ public class SaleService {
     public Sale createSale(SaleRequest request, String cashierUsername) {
         logger.info("Creating sale for cashier: {}", cashierUsername);
 
-        // Get cashier
         User cashier = userRepository.findByUsername(cashierUsername)
                 .orElseThrow(() -> new RuntimeException("Cashier not found"));
 
-        // Get customer if provided
         Customer customer = null;
         if (request.getCustomerId() != null) {
             customer = customerRepository.findById(request.getCustomerId())
                     .orElseThrow(() -> new RuntimeException("Customer not found"));
         }
 
-        // Generate invoice number
         String invoiceNumber = generateInvoiceNumber();
-
-        // Create sale
-        Sale sale = new Sale(invoiceNumber, cashier, customer,
-                request.getPaymentType());
-
+        Sale sale = new Sale(invoiceNumber, cashier, customer, request.getPaymentType());
         BigDecimal totalAmount = BigDecimal.ZERO;
 
-        // Add items
         for (SaleItemDTO itemDTO : request.getItems()) {
             Product product = productRepository.findById(itemDTO.getProductId())
                     .orElseThrow(() -> new RuntimeException("Product not found"));
 
-            // Check stock
             if (product.getStockQty() < itemDTO.getQuantity()) {
-                throw new RuntimeException("Insufficient stock for product: " +
-                        product.getName());
+                throw new RuntimeException("Insufficient stock for product: " + product.getName());
             }
 
-            // Create sale item
-            BigDecimal price = itemDTO.getPrice() != null ?
-                    itemDTO.getPrice() : product.getUnitPrice();
+            BigDecimal price = itemDTO.getPrice() != null ? itemDTO.getPrice() : product.getUnitPrice();
             SaleItem saleItem = new SaleItem(product, itemDTO.getQuantity(), price);
             sale.addItem(saleItem);
 
@@ -88,19 +79,45 @@ public class SaleService {
             product.setStockQty(product.getStockQty() - itemDTO.getQuantity());
             productRepository.save(product);
 
-            totalAmount = totalAmount.add(saleItem.getSubtotal());
+            // Check and create low stock notification
+            checkAndCreateLowStockNotifications(product);
 
-            logger.info("Added item: {} x{} = ${}", product.getName(),
-                    itemDTO.getQuantity(), saleItem.getSubtotal());
+            totalAmount = totalAmount.add(saleItem.getSubtotal());
+            logger.info("Added item: {} x{} = ${}", product.getName(), itemDTO.getQuantity(), saleItem.getSubtotal());
         }
 
         sale.setTotalAmount(totalAmount);
         Sale savedSale = saleRepository.save(sale);
 
-        logger.info("Sale created: Invoice #{}, Total: ${}",
-                invoiceNumber, totalAmount);
-
+        logger.info("Sale created: Invoice #{}, Total: ${}", invoiceNumber, totalAmount);
         return savedSale;
+    }
+
+    private void checkAndCreateLowStockNotifications(Product product) {
+        if (product.getStockQty() < 10) {
+            List<User> admins = userRepository.findByRole(UserRole.ADMIN);
+
+            for (User admin : admins) {
+                // Check if notification already exists for this product
+                boolean notificationExists = notificationRepository
+                        .findByUserIdAndIsReadFalseOrderByCreatedAtDesc(admin.getId())
+                        .stream()
+                        .anyMatch(n -> n.getMessage().contains(product.getName()) &&
+                                n.getType() == NotificationType.LOW_STOCK);
+
+                if (!notificationExists) {
+                    Notification notification = new Notification(
+                            admin,
+                            "Low Stock Alert",
+                            String.format("Product '%s' is running low on stock. Current stock: %d units",
+                                    product.getName(), product.getStockQty()),
+                            NotificationType.LOW_STOCK
+                    );
+                    notificationRepository.save(notification);
+                    logger.info("Created low stock notification for product: {}", product.getName());
+                }
+            }
+        }
     }
 
     private String generateInvoiceNumber() {
@@ -113,12 +130,8 @@ public class SaleService {
     }
 
     public List<Sale> getTodaySales() {
-        LocalDateTime startOfDay = LocalDateTime.now().withHour(0)
-                .withMinute(0)
-                .withSecond(0);
-        LocalDateTime endOfDay = LocalDateTime.now().withHour(23)
-                .withMinute(59)
-                .withSecond(59);
+        LocalDateTime startOfDay = LocalDateTime.now().withHour(0).withMinute(0).withSecond(0);
+        LocalDateTime endOfDay = LocalDateTime.now().withHour(23).withMinute(59).withSecond(59);
         return getSalesByDateRange(startOfDay, endOfDay);
     }
 }
